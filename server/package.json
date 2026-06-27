@@ -1,0 +1,19 @@
+{
+  "name": "angularjs-lsp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AngularJS 1.x LSP server — static analysis for cross-file navigation",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "dependencies": {
+    "meriyah": "^6.0.0",
+    "vscode-languageserver": "^10.0.0",
+    "vscode-languageserver-textdocument": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0"
+  }
+}

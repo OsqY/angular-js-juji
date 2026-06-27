@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html ng-app="myApp">
+<head>
+  <title>{{ pageTitle }}</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body ng-controller="MainController" ng-init="init()">
+  <header>
+    <h1>{{ appName }} — {{ pageTitle }}</h1>
+    <div class="user-info">
+      <span ng-show="loading">Loading...</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <button ng-click="refresh()" class="btn btn-primary">
+        Refresh
+      </button>
+      <span class="badge" ng-class="getStatusClass('active')">
+        {{ items.length }} items
+      </span>
+    </div>
+
+    <div class="item-list" ng-show="!loading">
+      <div ng-repeat="item in items" class="item-card"
+           ng-click="selectItem(item)"
+           ng-class="{ selected: selectedItem.id === item.id }">
+        <h3>{{ item.name }}</h3>
+        <p>{{ item.description }}</p>
+        <span class="badge" ng-class="getStatusClass(item.status)">
+          {{ item.status }}
+        </span>
+        <button ng-click="deleteItem(item.id); $event.stopPropagation()"
+                class="btn btn-danger btn-sm">
+          Delete
+        </button>
+      </div>
+    </div>
+
+    <div class="details-panel" ng-show="showDetails && selectedItem">
+      <h2>{{ selectedItem.name }}</h2>
+      <p>{{ selectedItem.description }}</p>
+      <notification-panel items="selectedItem.notifications" max-items="5"></notification-panel>
+    </div>
+  </main>
+
+  <loading-spinner visible="loading"></loading-spinner>
+</body>
+</html>

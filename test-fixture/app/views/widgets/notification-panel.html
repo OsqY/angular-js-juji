@@ -1,0 +1,12 @@
+<div class="notification-panel">
+  <h4>Notifications</h4>
+  <div ng-repeat="notification in items | limitTo: maxItems" class="notification-item"
+       ng-click="markRead(notification)">
+    <span class="notification-icon" ng-class="notification.type"></span>
+    <span class="notification-text">{{ notification.message }}</span>
+    <span class="notification-time">{{ notification.createdAt | date:'short' }}</span>
+  </div>
+  <div ng-show="hasMore" class="view-more">
+    <a ng-click="viewAll()">View all notifications →</a>
+  </div>
+</div>
