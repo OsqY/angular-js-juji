@@ -996,10 +996,10 @@ export function scanWorkspace(opts: ScanOptions): {
         const ext = path.extname(entry.name).toLowerCase();
         if (ext === ".js") {
           opts.progress?.(full);
-          jsResults.push(scanJsFile(full));
+          try { jsResults.push(scanJsFile(full)); } catch (err) { console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`); }
         } else if (ext === ".html") {
           opts.progress?.(full);
-          htmlResults.push(scanHtmlFile(full));
+          try { htmlResults.push(scanHtmlFile(full)); } catch (err) { console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`); }
         }
       }
     }

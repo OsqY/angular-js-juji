@@ -210,8 +210,10 @@ export function findAllReferences(
 }
 
 /**
- * Check whether a workspace contains AngularJS by scanning for the tell-tale
- * `angular.js` file or `angular.module(` pattern.
+ * Check whether a workspace contains AngularJS by scanning for:
+ * 1. An `angular.js` marker file (up to 5 levels deep)
+ * 2. `angular.module(` in JS file content (up to 100 files, 5 levels)
+ * 3. `package.json` with `"angular": "^1."` dependency
  */
 export function detectAngularJs(rootDir: string): boolean {
   const SKIP = new Set([
@@ -219,10 +221,24 @@ export function detectAngularJs(rootDir: string): boolean {
     ".angular", ".cache", "target", "coverage",
   ]);
 
-  // Find angular.js marker file (up to 3 levels deep)
+  // 1. Check package.json for angular 1.x dependency
+  try {
+    const pkgPath = path.join(rootDir, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      const angularDep =
+        (pkg.dependencies && pkg.dependencies.angular) ||
+        (pkg.devDependencies && pkg.devDependencies.angular);
+      if (angularDep && /^\^?1\./.test(angularDep)) return true;
+    }
+  } catch {
+    // ignore invalid package.json
+  }
+
+  // 2. Find angular.js marker file (up to 5 levels deep)
   let foundMarker = false;
   function walkMarker(dir: string, depth: number) {
-    if (depth > 3 || foundMarker) return;
+    if (depth > 5 || foundMarker) return;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -242,10 +258,10 @@ export function detectAngularJs(rootDir: string): boolean {
   walkMarker(rootDir, 0);
   if (foundMarker) return true;
 
-  // Search for `angular.module(` in JS files (up to 20, 3 levels deep)
+  // 3. Search for `angular.module(` in JS files (up to 100, 5 levels deep)
   let jsCount = 0;
   function walkJs(dir: string, depth: number): boolean {
-    if (depth > 3 || jsCount >= 20) return false;
+    if (depth > 5 || jsCount >= 100) return false;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });

@@ -19634,10 +19634,18 @@ var require_scanner = __commonJS({
             const ext = path2.extname(entry.name).toLowerCase();
             if (ext === ".js") {
               opts.progress?.(full);
-              jsResults.push(scanJsFile(full));
+              try {
+                jsResults.push(scanJsFile(full));
+              } catch (err) {
+                console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`);
+              }
             } else if (ext === ".html") {
               opts.progress?.(full);
-              htmlResults.push(scanHtmlFile(full));
+              try {
+                htmlResults.push(scanHtmlFile(full));
+              } catch (err) {
+                console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`);
+              }
             }
           }
         }
@@ -19833,9 +19841,19 @@ var require_analyzer = __commonJS({
         "target",
         "coverage"
       ]);
+      try {
+        const pkgPath = path2.join(rootDir, "package.json");
+        if (fs2.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs2.readFileSync(pkgPath, "utf-8"));
+          const angularDep = pkg.dependencies && pkg.dependencies.angular || pkg.devDependencies && pkg.devDependencies.angular;
+          if (angularDep && /^\^?1\./.test(angularDep))
+            return true;
+        }
+      } catch {
+      }
       let foundMarker = false;
       function walkMarker(dir, depth) {
-        if (depth > 3 || foundMarker)
+        if (depth > 5 || foundMarker)
           return;
         let entries;
         try {
@@ -19858,7 +19876,7 @@ var require_analyzer = __commonJS({
         return true;
       let jsCount = 0;
       function walkJs(dir, depth) {
-        if (depth > 3 || jsCount >= 20)
+        if (depth > 5 || jsCount >= 100)
           return false;
         let entries;
         try {
