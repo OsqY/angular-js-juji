@@ -18917,6 +18917,7 @@ var require_scanner = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.scanJsFile = scanJsFile;
     exports2.scanHtmlFile = scanHtmlFile;
+    exports2.scanWorkspaceAsync = scanWorkspaceAsync;
     exports2.scanWorkspace = scanWorkspace;
     var fs2 = __importStar2(require("fs"));
     var path2 = __importStar2(require("path"));
@@ -18930,7 +18931,18 @@ var require_scanner = __commonJS({
       ".angular",
       ".cache",
       "coverage",
-      ".nyc_output"
+      ".nyc_output",
+      ".tsbuildinfo",
+      "jspm_packages",
+      "typings",
+      "typings-global",
+      ".sass-cache",
+      "__pycache__",
+      ".idea",
+      ".vscode",
+      ".serverless",
+      ".next",
+      ".nuxt"
     ]);
     function toUri(absPath) {
       return "file://" + absPath;
@@ -19614,9 +19626,12 @@ var require_scanner = __commonJS({
       }
       return tokens;
     }
-    function scanWorkspace(opts) {
-      const jsResults = [];
-      const htmlResults = [];
+    var DEFAULT_MAX_JS = 2e3;
+    var DEFAULT_MAX_HTML = 2e3;
+    var CHUNK_SIZE = 100;
+    function collectFiles(rootDir) {
+      const jsFiles = [];
+      const htmlFiles = [];
       function walkDir(dir) {
         let entries;
         try {
@@ -19632,26 +19647,69 @@ var require_scanner = __commonJS({
             }
           } else if (entry.isFile()) {
             const ext = path2.extname(entry.name).toLowerCase();
-            if (ext === ".js") {
-              opts.progress?.(full);
-              try {
-                jsResults.push(scanJsFile(full));
-              } catch (err) {
-                console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`);
-              }
-            } else if (ext === ".html") {
-              opts.progress?.(full);
-              try {
-                htmlResults.push(scanHtmlFile(full));
-              } catch (err) {
-                console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`);
-              }
-            }
+            if (ext === ".js" && !entry.name.endsWith(".min.js"))
+              jsFiles.push(full);
+            else if (ext === ".html")
+              htmlFiles.push(full);
           }
         }
       }
-      walkDir(opts.rootDir);
-      return { jsResults, htmlResults };
+      walkDir(rootDir);
+      return { jsFiles, htmlFiles };
+    }
+    async function processFilesInChunks(files, max, processFn, label, progress) {
+      const results = [];
+      const limited = max > 0 ? files.slice(0, max) : files;
+      const total = limited.length;
+      for (let start = 0; start < total; start += CHUNK_SIZE) {
+        const chunk = limited.slice(start, start + CHUNK_SIZE);
+        for (const file of chunk) {
+          try {
+            results.push(processFn(file));
+          } catch (err) {
+            console.error(`[AngularJS LSP] Error scanning ${file}: ${err}`);
+          }
+        }
+        const done = Math.min(start + CHUNK_SIZE, total);
+        progress?.(`[AngularJS LSP] ${label}: ${done}/${total} files`);
+        if (start + CHUNK_SIZE < total) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      }
+      return results;
+    }
+    async function scanWorkspaceAsync(opts) {
+      const maxJs = opts.maxJsFiles ?? DEFAULT_MAX_JS;
+      const maxHtml = opts.maxHtmlFiles ?? DEFAULT_MAX_HTML;
+      const { jsFiles, htmlFiles } = collectFiles(opts.rootDir);
+      opts.progress?.(`[AngularJS LSP] Found ${jsFiles.length} JS + ${htmlFiles.length} HTML files`);
+      const jsResults = await processFilesInChunks(jsFiles, maxJs, scanJsFile, "JS files", opts.progress);
+      const htmlResults = await processFilesInChunks(htmlFiles, maxHtml, scanHtmlFile, "HTML files", opts.progress);
+      return {
+        jsResults,
+        htmlResults,
+        jsTotal: jsFiles.length,
+        htmlTotal: htmlFiles.length
+      };
+    }
+    function scanWorkspace(opts) {
+      const { jsFiles, htmlFiles } = collectFiles(opts.rootDir);
+      return {
+        jsResults: jsFiles.slice(0, opts.maxJsFiles ?? DEFAULT_MAX_JS).map((f) => {
+          try {
+            return scanJsFile(f);
+          } catch {
+          }
+          return null;
+        }).filter((r) => r !== null),
+        htmlResults: htmlFiles.slice(0, opts.maxHtmlFiles ?? DEFAULT_MAX_HTML).map((f) => {
+          try {
+            return scanHtmlFile(f);
+          } catch {
+          }
+          return null;
+        }).filter((r) => r !== null)
+      };
     }
   }
 });
@@ -19993,7 +20051,7 @@ function getIdentifierAtPosition(doc, pos) {
 function toLocation(def) {
   return node_1.Location.create(def.uri, node_1.Range.create(node_1.Position.create(def.line, def.column), node_1.Position.create(def.line, def.column + 1)));
 }
-function startWorkspaceScan() {
+async function startWorkspaceScan() {
   if (scanInProgress || !workspaceRoot)
     return;
   scanInProgress = true;
@@ -20009,10 +20067,11 @@ function startWorkspaceScan() {
     title: "Indexing AngularJS project...",
     percentage: 0
   });
-  const { jsResults, htmlResults } = (0, scanner_js_1.scanWorkspace)({
+  connection.window.showInformationMessage("[AngularJS LSP] Indexing project... scanning JS + HTML files.");
+  const { jsResults, htmlResults, jsTotal, htmlTotal } = await (0, scanner_js_1.scanWorkspaceAsync)({
     rootDir: workspaceRoot,
-    progress: (file) => {
-      connection.console.info(`[AngularJS LSP] Scanning: ${file}`);
+    progress: (msg) => {
+      connection.console.info(msg);
     }
   });
   jsResultsByUri.clear();

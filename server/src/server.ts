@@ -33,7 +33,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import * as path from "path";
 import * as fs from "fs";
 
-import { scanWorkspace, scanJsFile, scanHtmlFile } from "./scanner.js";
+import { scanWorkspaceAsync, scanJsFile, scanHtmlFile } from "./scanner.js";
 import {
   buildSymbolTable,
   findDefinitions,
@@ -125,7 +125,7 @@ function toLocation(
 
 // --------------- Workspace scanning ---------------
 
-function startWorkspaceScan() {
+async function startWorkspaceScan() {
   if (scanInProgress || !workspaceRoot) return;
   scanInProgress = true;
 
@@ -150,12 +150,17 @@ function startWorkspaceScan() {
     percentage: 0,
   });
 
-  const { jsResults, htmlResults } = scanWorkspace({
-    rootDir: workspaceRoot,
-    progress: (file) => {
-      connection.console.info(`[AngularJS LSP] Scanning: ${file}`);
-    },
-  });
+  connection.window.showInformationMessage(
+    "[AngularJS LSP] Indexing project... scanning JS + HTML files.",
+  );
+
+  const { jsResults, htmlResults, jsTotal, htmlTotal } =
+    await scanWorkspaceAsync({
+      rootDir: workspaceRoot,
+      progress: (msg) => {
+        connection.console.info(msg);
+      },
+    });
 
   // Store results in persistent maps so single-file updates don't wipe them
   jsResultsByUri.clear();

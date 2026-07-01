@@ -32,6 +32,17 @@ const SKIP_DIRS = new Set([
   ".cache",
   "coverage",
   ".nyc_output",
+  ".tsbuildinfo",
+  "jspm_packages",
+  "typings",
+  "typings-global",
+  ".sass-cache",
+  "__pycache__",
+  ".idea",
+  ".vscode",
+  ".serverless",
+  ".next",
+  ".nuxt",
 ]);
 
 /** Convert a relative path or absolute file-system path to a `file://` URI. */
@@ -966,17 +977,22 @@ function tokenizeExpression(expr: string): string[] {
 export interface ScanOptions {
   rootDir: string;
   progress?: (file: string) => void;
+  /** Max files to scan (0 = unlimited). */
+  maxJsFiles?: number;
+  maxHtmlFiles?: number;
 }
 
+const DEFAULT_MAX_JS = 2000;
+const DEFAULT_MAX_HTML = 2000;
+const CHUNK_SIZE = 100;
+
 /**
- * Walk the workspace directory recursively and scan all JS and HTML files.
+ * Walk the workspace directory recursively and collect JS and HTML file paths.
+ * Fast I/O-only pass, returns immediately.
  */
-export function scanWorkspace(opts: ScanOptions): {
-  jsResults: JsScanResult[];
-  htmlResults: TemplateFile[];
-} {
-  const jsResults: JsScanResult[] = [];
-  const htmlResults: TemplateFile[] = [];
+function collectFiles(rootDir: string): { jsFiles: string[]; htmlFiles: string[] } {
+  const jsFiles: string[] = [];
+  const htmlFiles: string[] = [];
 
   function walkDir(dir: string) {
     let entries: fs.Dirent[];
@@ -985,7 +1001,6 @@ export function scanWorkspace(opts: ScanOptions): {
     } catch {
       return;
     }
-
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -994,17 +1009,107 @@ export function scanWorkspace(opts: ScanOptions): {
         }
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (ext === ".js") {
-          opts.progress?.(full);
-          try { jsResults.push(scanJsFile(full)); } catch (err) { console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`); }
-        } else if (ext === ".html") {
-          opts.progress?.(full);
-          try { htmlResults.push(scanHtmlFile(full)); } catch (err) { console.error(`[AngularJS LSP] Error scanning ${full}: ${err}`); }
-        }
+        if (ext === ".js" && !entry.name.endsWith(".min.js")) jsFiles.push(full);
+        else if (ext === ".html") htmlFiles.push(full);
       }
     }
   }
 
-  walkDir(opts.rootDir);
-  return { jsResults, htmlResults };
+  walkDir(rootDir);
+  return { jsFiles, htmlFiles };
+}
+
+/**
+ * Process a batch of files in chunks, yielding to the event loop between chunks
+ * so the LSP doesn't freeze.
+ */
+async function processFilesInChunks<T>(
+  files: string[],
+  max: number,
+  processFn: (path: string) => T,
+  label: string,
+  progress?: (msg: string) => void,
+): Promise<T[]> {
+  const results: T[] = [];
+  const limited = max > 0 ? files.slice(0, max) : files;
+  const total = limited.length;
+
+  for (let start = 0; start < total; start += CHUNK_SIZE) {
+    const chunk = limited.slice(start, start + CHUNK_SIZE);
+
+    for (const file of chunk) {
+      try {
+        results.push(processFn(file));
+      } catch (err) {
+        console.error(`[AngularJS LSP] Error scanning ${file}: ${err}`);
+      }
+    }
+
+    const done = Math.min(start + CHUNK_SIZE, total);
+    progress?.(`[AngularJS LSP] ${label}: ${done}/${total} files`);
+
+    // Yield to event loop every chunk so LSP stays responsive
+    if (start + CHUNK_SIZE < total) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Walk the workspace, collect file paths (fast), then scan in async chunks.
+ * Returns a Promise that resolves when all files are processed.
+ * The LSP stays responsive during scanning thanks to chunked yielding.
+ */
+export async function scanWorkspaceAsync(
+  opts: ScanOptions,
+): Promise<{
+  jsResults: JsScanResult[];
+  htmlResults: TemplateFile[];
+  jsTotal: number;
+  htmlTotal: number;
+}> {
+  const maxJs = opts.maxJsFiles ?? DEFAULT_MAX_JS;
+  const maxHtml = opts.maxHtmlFiles ?? DEFAULT_MAX_HTML;
+
+  // Phase 1: collect file paths (fast I/O, sync)
+  const { jsFiles, htmlFiles } = collectFiles(opts.rootDir);
+
+  opts.progress?.(`[AngularJS LSP] Found ${jsFiles.length} JS + ${htmlFiles.length} HTML files`);
+
+  // Phase 2: scan in async chunks
+  const jsResults = await processFilesInChunks(
+    jsFiles, maxJs, scanJsFile, "JS files", opts.progress,
+  );
+  const htmlResults = await processFilesInChunks(
+    htmlFiles, maxHtml, scanHtmlFile, "HTML files", opts.progress,
+  );
+
+  return {
+    jsResults,
+    htmlResults,
+    jsTotal: jsFiles.length,
+    htmlTotal: htmlFiles.length,
+  };
+}
+
+/**
+ * Sync version for small projects / testing. Same logic but blocking.
+ */
+export function scanWorkspace(opts: ScanOptions): {
+  jsResults: JsScanResult[];
+  htmlResults: TemplateFile[];
+} {
+  const { jsFiles, htmlFiles } = collectFiles(opts.rootDir);
+  return {
+    jsResults: jsFiles
+      .slice(0, opts.maxJsFiles ?? DEFAULT_MAX_JS)
+      .map((f) => { try { return scanJsFile(f); } catch {} return null; })
+      .filter(<T>(r: T | null): r is T => r !== null),
+    htmlResults: htmlFiles
+      .slice(0, opts.maxHtmlFiles ?? DEFAULT_MAX_HTML)
+      .map((f) => { try { return scanHtmlFile(f); } catch {} return null; })
+      .filter(<T>(r: T | null): r is T => r !== null),
+  };
 }
